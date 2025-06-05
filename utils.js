@@ -24,6 +24,7 @@ const normalizePropertyName = key => key.toLowerCase().replace(/__c$/, '').repla
 
 const goal = actions => {
   // this is where the data will be written to the database
+  console.log(actions.filter(obj => obj.actionName == 'Meeting Created' || obj.actionName == 'Meeting Updated'));
   console.log(actions);
 };
 

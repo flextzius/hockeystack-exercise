@@ -13,8 +13,8 @@ const generateLastModifiedDateFilter = (date, nowDate, propertyName = 'hs_lastmo
   const lastModifiedDateFilter = date ?
     {
       filters: [
-        { propertyName, operator: 'GTQ', value: `${date.valueOf()}` },
-        { propertyName, operator: 'LTQ', value: `${nowDate.valueOf()}` }
+        { propertyName, operator: 'GTE', value: `${date.valueOf()}` },
+        { propertyName, operator: 'LTE', value: `${nowDate.valueOf()}` }
       ]
     } :
     {};
@@ -287,6 +287,100 @@ const drainQueue = async (domain, actions, q) => {
   return true;
 };
 
+const processMeetings = async (domain, hubId, q) => {
+  const account = domain.integrations.hubspot.accounts.find(acc => acc.hubId === hubId);
+  const lastPulledDate = new Date(account.lastPulledDates?.meetings || 0);
+  const now = new Date();
+
+  let after = undefined;
+  let hasMore = true;
+  const limit = 100;
+
+  while (hasMore) {
+    let result;
+    let tryCount = 0;
+
+    while (tryCount <= 4) {
+      try {
+        result = await hubspotClient.crm.objects.basicApi.getPage(
+          'meetings',
+          limit,
+          after,
+          ['hs_title', 'hs_timestamp']
+        );
+        break;
+      } catch (err) {
+        tryCount++;
+        console.error(`Meeting fetch failed (attempt ${tryCount}):`, err.message);
+        if (new Date() > expirationDate) {
+          await refreshAccessToken(domain, hubId);
+        }
+        await new Promise(res => setTimeout(res, 5000 * Math.pow(2, tryCount)));
+      }
+    }
+
+    const meetings = result?.results || result?.body?.results || [];
+    console.log(meetings)
+
+    if (!Array.isArray(meetings)) {
+      throw new Error('Failed to fetch meetings or result format invalid.');
+    }
+
+    for (const meeting of meetings) {
+      const isCreated = !lastPulledDate || new Date(meeting.createdAt) > lastPulledDate;
+
+      // Get associated contacts
+      let associations = [];
+      try {
+        const assocResult = await hubspotClient.crm.objects.associationsApi.getAll(
+          'meetings',
+          meeting.id,
+          'contacts'
+        );
+        associations = assocResult.results.map(a => a.id);
+      } catch (err) {
+        console.error(`Failed to get contacts for meeting ${meeting.id}`, err.message);
+        continue;
+      }
+
+      for (const contactId of associations) {
+        let contact;
+        try {
+          contact = await hubspotClient.crm.contacts.basicApi.getById(contactId, ['email']);
+        } catch (err) {
+          console.error(`Failed to fetch contact ${contactId}`, err.message);
+          continue;
+        }
+
+        const email = contact?.properties?.email;
+        if (!email) {
+          console.warn(`Contact ${contactId} has no email`);
+          continue;
+        }
+
+        q.push({
+          actionName: isCreated ? 'Meeting Created' : 'Meeting Updated',
+          actionDate: new Date(isCreated ? meeting.createdAt : meeting.updatedAt),
+          includeInAnalytics: 0,
+          identity: email,
+          eventProperties: {
+            meeting_id: meeting.id,
+            meeting_title: `Meeting on ${new Date(meeting.properties.hs_timestamp).toLocaleString()}`,
+            meeting_timestamp: meeting.properties.hs_timestamp
+          }
+        });
+      }
+    }
+
+    after = result.paging?.next?.after;
+    hasMore = !!after;
+  }
+
+  account.lastPulledDates.meetings = now;
+  await saveDomain(domain);
+  return true;
+};
+
 const pullDataFromHubspot = async () => {
   console.log('start pulling data from HubSpot');
 
@@ -297,6 +391,7 @@ const pullDataFromHubspot = async () => {
 
     try {
       await refreshAccessToken(domain, account.hubId);
+      console.log('refresh access token');
     } catch (err) {
       console.log(err, { apiKey: domain.apiKey, metadata: { operation: 'refreshAccessToken' } });
     }
@@ -317,6 +412,13 @@ const pullDataFromHubspot = async () => {
     } catch (err) {
       console.log(err, { apiKey: domain.apiKey, metadata: { operation: 'processCompanies', hubId: account.hubId } });
     }
+
+    try {
+      await processMeetings(domain, account.hubId, q);
+      console.log('process meetings');
+    } catch (err) {
+      console.log(err, { apiKey: domain.apiKey, metadata: { operation: 'processMeetings', hubId: account.hubId } });
+    };
 
     try {
       await drainQueue(domain, actions, q);
