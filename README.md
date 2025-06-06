@@ -1,24 +1,19 @@
-# API Sample Test
+## Output
+![output](img/output.png)
 
-## Getting Started
+## Debrief
+1. Code Quality and Readability
+    - Decluttering the worker.js file and making controllers for different controllers (not a controller for each function, just categorizing them would be fine) would make wonders for this project.
+    Also storing repetitive HubSpot API endpoints or texts could be stored in a seperate json file would be nice, but dynamic links containing query params would cause an issue.
 
-This project requires a newer version of Node. Don't forget to install the NPM packages afterwards.
+2. Architecture
+    - This project currently uses `"@hubspot/api-client": "^8.5.0",` and the latest version of the package is `13.0.0` which is published 16 days ago. 
+    The new version has better handling of the meetings API. It has caused significant misunderstandings on my end. 
+    Another aspect to consider is the option of other backend frameworks and TypeScript. The type-safety features and better performance can be achieved through various frameworks.
 
-You should change the name of the ```.env.example``` file to ```.env```.
+3. Code Performance
+    - Parallelizing independent tasks would significantly improve the performance. Current code sequentially calls processContacts, processCompanies, and processMeetings, although they are independent.
+    Another thing to consider is the retry logic. If HubSpot API is under load, the current code might get rate-limited or 500 errors. Detecting rate-limits and using `p-retry` or `axios-retry` would make errors easier to handle.
+    Finally, the current code calls `domain.save()` after each processing function. Even though it didn't effect the code I ran (because it is disabled), in production it would effect the performance. Calling `domain.save()` once would be enough.  
 
-Run ```node app.js``` to get things started. Hopefully the project should start without any errors.
-
-## Explanations
-
-The actual task will be explained separately.
-
-This is a very simple project that pulls data from HubSpot's CRM API. It pulls and processes company and contact data from HubSpot but does not insert it into the database.
-
-In HubSpot, contacts can be part of companies. HubSpot calls this relationship an association. That is, a contact has an association with a company. We make a separate call when processing contacts to fetch this association data.
-
-The Domain model is a record signifying a HockeyStack customer. You shouldn't worry about the actual implementation of it. The only important property is the ```hubspot```object in ```integrations```. This is how we know which HubSpot instance to connect to.
-
-The implementation of the server and the ```server.js``` is not important for this project.
-
-Every data source in this project was created for test purposes. If any request takes more than 5 seconds to execute, there is something wrong with the implementation.
-
+# flextzius
