@@ -320,7 +320,6 @@ const processMeetings = async (domain, hubId, q) => {
     }
 
     const meetings = result?.results || result?.body?.results || [];
-    console.log(meetings)
 
     if (!Array.isArray(meetings)) {
       throw new Error('Failed to fetch meetings or result format invalid.');
@@ -332,12 +331,15 @@ const processMeetings = async (domain, hubId, q) => {
       // Get associated contacts
       let associations = [];
       try {
-        const assocResult = await hubspotClient.crm.objects.associationsApi.getAll(
-          'meetings',
-          meeting.id,
-          'contacts'
-        );
-        associations = assocResult.results.map(a => a.id);
+        const assocResult = await hubspotClient.apiRequest({
+          method: 'POST',
+          path: '/crm/v3/associations/MEETINGS/CONTACTS/batch/read',
+          body: { inputs: [{ id: meeting.id }] }
+        });
+
+        const data = await assocResult.json();
+
+        associations = data.results.map(a => a.to[0].id);
       } catch (err) {
         console.error(`Failed to get contacts for meeting ${meeting.id}`, err.message);
         continue;
